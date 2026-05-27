@@ -11,6 +11,16 @@ OSRS music is MIDI-driven and deterministic. The plugin:
 3. Runs a background scheduler that "plays through" the score in lockstep with wall-clock time since the track started — **without emitting audio**. The actual sound still comes from OSRS.
 4. On each note-on event, picks one nearby object and flashes it. The color is derived from the note's pitch on a chromatic color wheel.
 
+## Colors
+
+Each flash's color comes from the MIDI note's pitch, in three steps:
+
+1. **Drop the octave.** Take `note % 12`, which collapses every octave onto the same 12-element wheel. Middle C and the C two octaves above it both hash to index 0 — that's why melodic motifs that repeat at different octaves show up as the same color cluster.
+2. **Map the index to a hue on a chromatic color wheel.** Index 0 (C) sits at 0° (red), and each semitone adds 30°. So C♯ is orange, D is yellow, E is green, G is sky blue, B is pink-red, etc.
+3. **Hold saturation and brightness constant** at 0.85 and 1.0, so only the hue varies. Notes close in pitch land close on the color wheel; notes that clash musically (a tritone apart) land on opposite sides — which is also where your eye reads "opposite color."
+
+This mapping is sometimes called a **chromatic circle** and has a long history in music visualization (Scriabin famously used a version of it).
+
 ## Sync
 
 A `Sync offset (ms)` slider lets you nudge the visualization forward or backward to match what you hear. Each new track resyncs automatically.
