@@ -19,6 +19,11 @@ A `Sync offset (ms)` slider lets you nudge the visualization forward or backward
 
 This plugin runs entirely on your machine and sends no data anywhere.
 
+## Special thanks to
+
+- [runelite/runelite](https://github.com/runelite/runelite) — the `net.runelite.cache.definitions.loaders.TrackLoader` class does the heavy lifting of converting Jagex's packed music format into standard SMF bytes.
+- [Rune-Status/lequietriot-RS-MIDI-Dumper](https://github.com/Rune-Status/lequietriot-RS-MIDI-Dumper) — `net/openrs/cache/track/Track.java` (Adam @ sigterm.info, 2017) is the reference decoder that pointed us at the right loader in the runelite-cache library.
+
 ## License
 
 BSD-2-Clause. See [LICENSE](LICENSE).

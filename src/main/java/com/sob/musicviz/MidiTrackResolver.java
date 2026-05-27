@@ -1,7 +1,6 @@
 package com.sob.musicviz;
 
 import java.io.ByteArrayInputStream;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -12,52 +11,23 @@ import javax.sound.midi.Sequence;
 import javax.sound.midi.ShortMessage;
 import javax.sound.midi.Track;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.cache.definitions.TrackDefinition;
+import net.runelite.cache.definitions.loaders.TrackLoader;
 
 @Slf4j
 final class MidiTrackResolver
 {
     private MidiTrackResolver() {}
 
-    /**
-     * Pulls the raw MIDI byte buffer off whatever object RuneLite's music
-     * API hands us. The exact accessor on `MidiRequest` is not part of the
-     * stable plugin API surface — try a few likely method names. If none
-     * work, the user needs to log what their version exposes and we wire
-     * it up explicitly. This is the riskiest piece of the plugin.
-     */
-    static byte[] extractMidiBytes(Object midiRequest)
+    static List<NoteEvent> flatten(byte[] cacheBytes) throws Exception
     {
-        if (midiRequest == null) return null;
-        String[] candidates = {"getMidi", "getData", "getMidiData", "getBytes"};
-        for (String name : candidates)
-        {
-            try
-            {
-                Method m = midiRequest.getClass().getMethod(name);
-                Object result = m.invoke(midiRequest);
-                if (result instanceof byte[])
-                {
-                    return (byte[]) result;
-                }
-            }
-            catch (NoSuchMethodException ignored)
-            {
-            }
-            catch (Exception e)
-            {
-                log.debug("midi accessor {} threw", name, e);
-            }
-        }
-        return null;
-    }
-
-    static List<NoteEvent> flatten(byte[] midiBytes) throws Exception
-    {
-        Sequence seq = javax.sound.midi.MidiSystem.getSequence(new ByteArrayInputStream(midiBytes));
+        TrackDefinition def = new TrackLoader().load(cacheBytes);
+        byte[] smf = def.midi;
+        Sequence seq = javax.sound.midi.MidiSystem.getSequence(new ByteArrayInputStream(smf));
         int resolution = seq.getResolution();
         if (resolution <= 0) return Collections.emptyList();
 
-        long[] tempoByTick = buildTempoMap(seq, resolution);
+        long[] tempoMap = buildTempoMap(seq);
 
         List<NoteEvent> out = new ArrayList<>();
         for (Track track : seq.getTracks())
@@ -72,7 +42,7 @@ final class MidiTrackResolver
                 int vel = sm.getData2();
                 if (vel == 0) continue;
 
-                long ms = tickToMs(ev.getTick(), tempoByTick, resolution);
+                long ms = tickToMs(ev.getTick(), tempoMap, resolution);
                 out.add(new NoteEvent(ms, sm.getChannel(), sm.getData1(), vel));
             }
         }
@@ -81,11 +51,10 @@ final class MidiTrackResolver
     }
 
     /**
-     * Build a per-tick-bucket tempo lookup so tick→ms can honor tempo
-     * changes (MIDI meta event 0x51). Buckets are sparse — we store
-     * [tick, microsPerQuarter] pairs and interpolate linearly between.
+     * Honor MIDI tempo meta-events (0x51). Returns a flat [tick, usPerQuarter, ...]
+     * array sorted by tick, with an initial 120-BPM entry at tick 0.
      */
-    private static long[] buildTempoMap(Sequence seq, int ppq)
+    private static long[] buildTempoMap(Sequence seq)
     {
         List<long[]> changes = new ArrayList<>();
         changes.add(new long[]{0L, 500_000L});

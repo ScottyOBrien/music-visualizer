@@ -10,7 +10,8 @@ import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
-import net.runelite.api.TileObject;
+import net.runelite.api.GameObject;
+import net.runelite.api.MidiRequest;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.client.callback.ClientThread;
@@ -39,7 +40,7 @@ public class MusicVizPlugin extends Plugin
 
     private ScheduledExecutorService pollExec;
     private ScheduledFuture<?> pollTask;
-    private volatile Object lastRequest;
+    private volatile int lastArchiveId = Integer.MIN_VALUE;
     private final Random rr = new Random();
     private int rrCursor = 0;
 
@@ -58,7 +59,7 @@ public class MusicVizPlugin extends Plugin
         scheduler.stop();
         overlayManager.remove(overlay);
         flashes.clear();
-        lastRequest = null;
+        lastArchiveId = Integer.MIN_VALUE;
     }
 
     @Provides
@@ -110,18 +111,22 @@ public class MusicVizPlugin extends Plugin
             List<?> active = invokeListAccessor();
             if (active == null || active.isEmpty())
             {
-                if (lastRequest != null)
+                if (lastArchiveId != Integer.MIN_VALUE)
                 {
-                    lastRequest = null;
+                    lastArchiveId = Integer.MIN_VALUE;
                     scheduler.loadTrack(java.util.Collections.emptyList(), System.nanoTime());
                 }
                 return;
             }
             Object first = active.get(0);
-            if (first == lastRequest) return;
-            lastRequest = first;
+            if (!(first instanceof MidiRequest)) return;
+            MidiRequest req = (MidiRequest) first;
+            int archiveId = req.getArchiveId();
+            boolean jingle = req.isJingle();
+            if (archiveId == lastArchiveId) return;
+            lastArchiveId = archiveId;
             long startNanos = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(config.syncOffsetMs());
-            loadTrackAsync(first, startNanos);
+            loadTrackAsync(archiveId, jingle, startNanos);
         }
         catch (Throwable t)
         {
@@ -153,49 +158,80 @@ public class MusicVizPlugin extends Plugin
         return null;
     }
 
-    private void loadTrackAsync(Object request, long startNanos)
+    private void loadTrackAsync(int archiveId, boolean jingle, long startNanos)
     {
         if (pollExec == null) return;
         pollExec.submit(() -> {
             try
             {
-                byte[] bytes = MidiTrackResolver.extractMidiBytes(request);
+                byte[] bytes = MidiCacheLoader.load(archiveId, jingle);
                 if (bytes == null)
                 {
                     if (config.logCacheMisses())
                     {
-                        log.info("No MIDI bytes accessible on {} — visualizer idle for this track", request.getClass().getName());
+                        log.info("musicviz: no MIDI bytes for archive {} — idle", archiveId);
                     }
                     scheduler.loadTrack(java.util.Collections.emptyList(), startNanos);
                     return;
                 }
+                log.info("musicviz: archive {} -> {} bytes; head={}", archiveId, bytes.length, hexHead(bytes, 32));
+                int mthd = findMThd(bytes);
+                log.info("musicviz: MThd offset in archive {}: {}", archiveId, mthd);
                 List<NoteEvent> events = MidiTrackResolver.flatten(bytes);
+                log.info("musicviz: parsed {} note events from archive {}", events.size(), archiveId);
                 scheduler.loadTrack(events, startNanos);
                 flashes.clear();
             }
             catch (Throwable t)
             {
-                log.warn("Failed to load MIDI for {}", request, t);
+                log.warn("musicviz: failed to load MIDI for archive {}", archiveId, t);
             }
         });
     }
 
+    private static String hexHead(byte[] b, int n)
+    {
+        StringBuilder sb = new StringBuilder();
+        int limit = Math.min(n, b.length);
+        for (int i = 0; i < limit; i++)
+        {
+            sb.append(String.format("%02x", b[i] & 0xFF));
+            if (i < limit - 1) sb.append(' ');
+        }
+        return sb.toString();
+    }
+
+    private static int findMThd(byte[] b)
+    {
+        for (int i = 0; i + 4 <= b.length; i++)
+        {
+            if (b[i] == 'M' && b[i+1] == 'T' && b[i+2] == 'h' && b[i+3] == 'd') return i;
+        }
+        return -1;
+    }
+
     private void onNote(NoteEvent ev)
     {
-        if (ev.channel != config.melodyChannel()) return;
-        List<TileObject> targets = scanner.get();
+        int wantedChannel = config.melodyChannel();
+        if (wantedChannel >= 0 && ev.channel != wantedChannel) return;
+        List<GameObject> targets = scanner.get();
         if (targets.isEmpty()) return;
 
         int idx;
-        if (config.selectionMode() == MusicVizConfig.SelectionMode.HASH_BY_NOTE)
+        switch (config.selectionMode())
         {
-            idx = Math.floorMod(ev.note, targets.size());
+            case HASH_BY_NOTE:
+                idx = (int) Math.floorMod((long) ev.note * 2654435761L, targets.size());
+                break;
+            case ROUND_ROBIN:
+                idx = Math.floorMod(rrCursor++, targets.size());
+                break;
+            case RANDOM:
+            default:
+                idx = rr.nextInt(targets.size());
+                break;
         }
-        else
-        {
-            idx = Math.floorMod(rrCursor++, targets.size());
-        }
-        TileObject target = targets.get(idx);
+        GameObject target = targets.get(idx);
         flashes.add(new FlashState(target, System.currentTimeMillis(), NoteColor.forNote(ev.note)));
     }
 }

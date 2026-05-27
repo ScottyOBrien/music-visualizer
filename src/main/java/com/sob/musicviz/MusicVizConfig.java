@@ -10,10 +10,18 @@ import net.runelite.client.config.Units;
 @ConfigGroup("musicviz")
 public interface MusicVizConfig extends Config
 {
-    @ConfigSection(name = "Display", description = "Visual options", position = 0)
+    @ConfigSection(
+        name = "Heads-up: first-song lag",
+        description = "OSRS doesn't tell us how far into a track it currently is, so the first song after enabling the plugin (or after login) starts visualizing from the MIDI's beginning — even though the audio is already partway through. Every subsequent track change resyncs automatically.",
+        position = 0,
+        closedByDefault = true
+    )
+    String noticeSection = "noticeSection";
+
+    @ConfigSection(name = "Display", description = "Visual options", position = 1)
     String displaySection = "displaySection";
 
-    @ConfigSection(name = "Sync", description = "Audio sync tuning", position = 1)
+    @ConfigSection(name = "Sync", description = "Audio sync tuning", position = 2)
     String syncSection = "syncSection";
 
     @ConfigSection(name = "Advanced", description = "Power-user settings", position = 99, closedByDefault = true)
@@ -33,11 +41,11 @@ public interface MusicVizConfig extends Config
     default int colorAlpha() { return 160; }
 
     @ConfigItem(keyName = "selectionMode", name = "Target selection", description = "How notes map to nearby objects", section = displaySection, position = 3)
-    default SelectionMode selectionMode() { return SelectionMode.HASH_BY_NOTE; }
+    default SelectionMode selectionMode() { return SelectionMode.RANDOM; }
 
-    @Range(min = 0, max = 15)
-    @ConfigItem(keyName = "melodyChannel", name = "MIDI channel", description = "Channel to react to. 9 = GM percussion", section = syncSection, position = 0)
-    default int melodyChannel() { return 1; }
+    @Range(min = -1, max = 15)
+    @ConfigItem(keyName = "melodyChannel", name = "MIDI channel", description = "Channel to react to. -1 = all channels. 9 = GM percussion only", section = syncSection, position = 0)
+    default int melodyChannel() { return -1; }
 
     @Range(min = -2000, max = 2000)
     @Units(Units.MILLISECONDS)
@@ -54,6 +62,7 @@ public interface MusicVizConfig extends Config
 
     enum SelectionMode
     {
+        RANDOM,
         HASH_BY_NOTE,
         ROUND_ROBIN
     }

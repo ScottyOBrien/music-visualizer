@@ -10,15 +10,14 @@ import net.runelite.api.GameObject;
 import net.runelite.api.Player;
 import net.runelite.api.Scene;
 import net.runelite.api.Tile;
-import net.runelite.api.TileObject;
-import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.coords.LocalPoint;
 
 @Singleton
 class ObjectScanner
 {
     private final Client client;
 
-    private volatile List<TileObject> snapshot = Collections.emptyList();
+    private volatile List<GameObject> snapshot = Collections.emptyList();
 
     @Inject
     ObjectScanner(Client client)
@@ -35,18 +34,16 @@ class ObjectScanner
             return;
         }
 
-        WorldPoint center = local.getWorldLocation();
+        LocalPoint playerLoc = local.getLocalLocation();
         Scene scene = client.getScene();
         Tile[][][] tiles = scene.getTiles();
         int plane = client.getPlane();
-
-        List<TileObject> found = new ArrayList<>();
         Tile[][] planeTiles = tiles[plane];
 
-        int radSq = radius * radius;
-        int baseX = client.getBaseX();
-        int baseY = client.getBaseY();
+        int radiusUnits = radius * 128;
+        long radSq = (long) radiusUnits * radiusUnits;
 
+        List<GameObject> found = new ArrayList<>();
         for (int sx = 0; sx < planeTiles.length; sx++)
         {
             Tile[] row = planeTiles[sx];
@@ -55,17 +52,17 @@ class ObjectScanner
                 Tile tile = row[sy];
                 if (tile == null) continue;
 
-                int worldX = baseX + sx;
-                int worldY = baseY + sy;
-                int dx = worldX - center.getX();
-                int dy = worldY - center.getY();
-                if (dx * dx + dy * dy > radSq) continue;
-
                 GameObject[] objs = tile.getGameObjects();
                 if (objs == null) continue;
+
                 for (GameObject obj : objs)
                 {
                     if (obj == null) continue;
+                    LocalPoint p = obj.getLocalLocation();
+                    if (p == null) continue;
+                    long dx = p.getX() - playerLoc.getX();
+                    long dy = p.getY() - playerLoc.getY();
+                    if (dx * dx + dy * dy > radSq) continue;
                     found.add(obj);
                 }
             }
@@ -74,7 +71,7 @@ class ObjectScanner
         snapshot = found;
     }
 
-    List<TileObject> get()
+    List<GameObject> get()
     {
         return snapshot;
     }
