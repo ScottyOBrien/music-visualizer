@@ -1,16 +1,10 @@
 package com.sob.musicviz;
 
-import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import javax.sound.midi.MetaMessage;
-import javax.sound.midi.MidiEvent;
-import javax.sound.midi.MidiMessage;
-import javax.sound.midi.Sequence;
-import javax.sound.midi.ShortMessage;
-import javax.sound.midi.Track;
 import lombok.extern.slf4j.Slf4j;
+import com.sob.musicviz.vendored.SmfParser;
 import com.sob.musicviz.vendored.TrackDefinition;
 import com.sob.musicviz.vendored.TrackLoader;
 
@@ -22,62 +16,45 @@ final class MidiTrackResolver
     static List<NoteEvent> flatten(byte[] cacheBytes) throws Exception
     {
         TrackDefinition def = new TrackLoader().load(cacheBytes);
-        byte[] smf = def.midi;
-        Sequence seq = javax.sound.midi.MidiSystem.getSequence(new ByteArrayInputStream(smf));
-        int resolution = seq.getResolution();
-        if (resolution <= 0) return Collections.emptyList();
-
-        long[] tempoMap = buildTempoMap(seq);
-
-        List<NoteEvent> out = new ArrayList<>();
-        for (Track track : seq.getTracks())
+        if (def == null || def.midi == null || def.midi.length == 0)
         {
-            for (int i = 0; i < track.size(); i++)
-            {
-                MidiEvent ev = track.get(i);
-                MidiMessage msg = ev.getMessage();
-                if (!(msg instanceof ShortMessage)) continue;
-                ShortMessage sm = (ShortMessage) msg;
-                if (sm.getCommand() != ShortMessage.NOTE_ON) continue;
-                int vel = sm.getData2();
-                if (vel == 0) continue;
+            return Collections.emptyList();
+        }
 
-                long ms = tickToMs(ev.getTick(), tempoMap, resolution);
-                out.add(new NoteEvent(ms, sm.getChannel(), sm.getData1(), vel));
-            }
+        SmfParser.Parsed parsed = SmfParser.parse(def.midi);
+        if (parsed.divisionPpq <= 0) return Collections.emptyList();
+
+        long[] tempoMap = buildTempoMap(parsed.tempoChanges);
+
+        List<NoteEvent> out = new ArrayList<>(parsed.noteOns.size());
+        for (SmfParser.NoteOn n : parsed.noteOns)
+        {
+            long ms = tickToMs(n.tick, tempoMap, parsed.divisionPpq);
+            out.add(new NoteEvent(ms, n.channel, n.note, n.velocity));
         }
         Collections.sort(out);
         return out;
     }
 
     /**
-     * Honor MIDI tempo meta-events (0x51). Returns a flat [tick, usPerQuarter, ...]
-     * array sorted by tick, with an initial 120-BPM entry at tick 0.
+     * Flatten the SMF tempo events (microseconds per quarter note at a tick)
+     * into a sparse [tick, usPerQuarter, ...] table sorted by tick. Tick 0
+     * defaults to 120 BPM (500000 us/q) if no earlier tempo is specified.
      */
-    private static long[] buildTempoMap(Sequence seq)
+    private static long[] buildTempoMap(List<SmfParser.TempoChange> changes)
     {
-        List<long[]> changes = new ArrayList<>();
-        changes.add(new long[]{0L, 500_000L});
-        for (Track t : seq.getTracks())
+        List<long[]> rows = new ArrayList<>(changes.size() + 1);
+        rows.add(new long[]{0L, 500_000L});
+        for (SmfParser.TempoChange tc : changes)
         {
-            for (int i = 0; i < t.size(); i++)
-            {
-                MidiEvent ev = t.get(i);
-                if (!(ev.getMessage() instanceof MetaMessage)) continue;
-                MetaMessage mm = (MetaMessage) ev.getMessage();
-                if (mm.getType() != 0x51) continue;
-                byte[] data = mm.getData();
-                if (data.length < 3) continue;
-                long us = ((data[0] & 0xFFL) << 16) | ((data[1] & 0xFFL) << 8) | (data[2] & 0xFFL);
-                changes.add(new long[]{ev.getTick(), us});
-            }
+            rows.add(new long[]{tc.tick, tc.microsPerQuarter});
         }
-        changes.sort((a, b) -> Long.compare(a[0], b[0]));
-        long[] flat = new long[changes.size() * 2];
-        for (int i = 0; i < changes.size(); i++)
+        rows.sort((a, b) -> Long.compare(a[0], b[0]));
+        long[] flat = new long[rows.size() * 2];
+        for (int i = 0; i < rows.size(); i++)
         {
-            flat[i * 2] = changes.get(i)[0];
-            flat[i * 2 + 1] = changes.get(i)[1];
+            flat[i * 2] = rows.get(i)[0];
+            flat[i * 2 + 1] = rows.get(i)[1];
         }
         return flat;
     }
