@@ -31,10 +31,10 @@ public interface MusicVizConfig extends Config
     @ConfigItem(
         keyName = "radius",
         name = "Radius (tiles)",
-        description = "How far around your character to scan for objects to flash. 20 is roughly one screen at default zoom.",
+        description = "How far around your character to scan for objects to flash. 10 keeps the visualization close and dense; 20 spreads it out roughly one screen at default zoom.",
         section = displaySection, position = 0
     )
-    default int radius() { return 20; }
+    default int radius() { return 10; }
 
     @Range(min = 100, max = 2000)
     @Units(Units.MILLISECONDS)
