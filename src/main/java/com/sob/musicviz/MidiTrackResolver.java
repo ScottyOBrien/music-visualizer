@@ -11,8 +11,8 @@ import javax.sound.midi.Sequence;
 import javax.sound.midi.ShortMessage;
 import javax.sound.midi.Track;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.cache.definitions.TrackDefinition;
-import net.runelite.cache.definitions.loaders.TrackLoader;
+import com.sob.musicviz.vendored.TrackDefinition;
+import com.sob.musicviz.vendored.TrackLoader;
 
 @Slf4j
 final class MidiTrackResolver

@@ -37,6 +37,7 @@ public class MusicVizPlugin extends Plugin
     @Inject private MidiScheduler scheduler;
     @Inject private ObjectScanner scanner;
     @Inject private FlashStore flashes;
+    @Inject private MidiCacheLoader cacheLoader;
 
     private ScheduledExecutorService pollExec;
     private ScheduledFuture<?> pollTask;
@@ -126,7 +127,11 @@ public class MusicVizPlugin extends Plugin
             if (archiveId == lastArchiveId) return;
             lastArchiveId = archiveId;
             long startNanos = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(config.syncOffsetMs());
-            loadTrackAsync(archiveId, jingle, startNanos);
+            // Cache read is fast (in-memory in the running client) so we do it on
+            // the client thread; only the SMF conversion + note flattening get
+            // pushed off-thread.
+            byte[] cacheBytes = cacheLoader.load(archiveId, jingle);
+            parseAsync(archiveId, cacheBytes, startNanos);
         }
         catch (Throwable t)
         {
@@ -158,56 +163,31 @@ public class MusicVizPlugin extends Plugin
         return null;
     }
 
-    private void loadTrackAsync(int archiveId, boolean jingle, long startNanos)
+    private void parseAsync(int archiveId, byte[] cacheBytes, long startNanos)
     {
         if (pollExec == null) return;
+        if (cacheBytes == null)
+        {
+            if (config.logCacheMisses())
+            {
+                log.info("musicviz: no cache bytes for archive {} — idle", archiveId);
+            }
+            scheduler.loadTrack(java.util.Collections.emptyList(), startNanos);
+            return;
+        }
         pollExec.submit(() -> {
             try
             {
-                byte[] bytes = MidiCacheLoader.load(archiveId, jingle);
-                if (bytes == null)
-                {
-                    if (config.logCacheMisses())
-                    {
-                        log.info("musicviz: no MIDI bytes for archive {} — idle", archiveId);
-                    }
-                    scheduler.loadTrack(java.util.Collections.emptyList(), startNanos);
-                    return;
-                }
-                log.info("musicviz: archive {} -> {} bytes; head={}", archiveId, bytes.length, hexHead(bytes, 32));
-                int mthd = findMThd(bytes);
-                log.info("musicviz: MThd offset in archive {}: {}", archiveId, mthd);
-                List<NoteEvent> events = MidiTrackResolver.flatten(bytes);
-                log.info("musicviz: parsed {} note events from archive {}", events.size(), archiveId);
+                List<NoteEvent> events = MidiTrackResolver.flatten(cacheBytes);
+                log.debug("musicviz: parsed {} note events from archive {}", events.size(), archiveId);
                 scheduler.loadTrack(events, startNanos);
                 flashes.clear();
             }
             catch (Throwable t)
             {
-                log.warn("musicviz: failed to load MIDI for archive {}", archiveId, t);
+                log.warn("musicviz: failed to parse MIDI for archive {}", archiveId, t);
             }
         });
-    }
-
-    private static String hexHead(byte[] b, int n)
-    {
-        StringBuilder sb = new StringBuilder();
-        int limit = Math.min(n, b.length);
-        for (int i = 0; i < limit; i++)
-        {
-            sb.append(String.format("%02x", b[i] & 0xFF));
-            if (i < limit - 1) sb.append(' ');
-        }
-        return sb.toString();
-    }
-
-    private static int findMThd(byte[] b)
-    {
-        for (int i = 0; i + 4 <= b.length; i++)
-        {
-            if (b[i] == 'M' && b[i+1] == 'T' && b[i+2] == 'h' && b[i+3] == 'd') return i;
-        }
-        return -1;
     }
 
     private void onNote(NoteEvent ev)
