@@ -109,7 +109,7 @@ public class MusicVizPlugin extends Plugin
     {
         try
         {
-            List<?> active = invokeListAccessor();
+            List<MidiRequest> active = client.getActiveMidiRequests();
             if (active == null || active.isEmpty())
             {
                 if (lastArchiveId != Integer.MIN_VALUE)
@@ -119,9 +119,7 @@ public class MusicVizPlugin extends Plugin
                 }
                 return;
             }
-            Object first = active.get(0);
-            if (!(first instanceof MidiRequest)) return;
-            MidiRequest req = (MidiRequest) first;
+            MidiRequest req = active.get(0);
             int archiveId = req.getArchiveId();
             boolean jingle = req.isJingle();
             if (archiveId == lastArchiveId) return;
@@ -137,30 +135,6 @@ public class MusicVizPlugin extends Plugin
         {
             log.debug("pollActiveTrack failed", t);
         }
-    }
-
-    /**
-     * `Client.getActiveMidiRequests()` is the documented method but its
-     * presence/name has shifted across RuneLite versions. Look it up
-     * reflectively so we degrade gracefully on older/newer clients.
-     */
-    private List<?> invokeListAccessor()
-    {
-        try
-        {
-            java.lang.reflect.Method m = client.getClass().getMethod("getActiveMidiRequests");
-            Object res = m.invoke(client);
-            if (res instanceof List) return (List<?>) res;
-        }
-        catch (NoSuchMethodException e)
-        {
-            log.debug("Client.getActiveMidiRequests not present on this RuneLite version");
-        }
-        catch (Exception e)
-        {
-            log.debug("getActiveMidiRequests threw", e);
-        }
-        return null;
     }
 
     private void parseAsync(int archiveId, byte[] cacheBytes, long startNanos)
